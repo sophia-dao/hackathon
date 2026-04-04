@@ -19,6 +19,9 @@ FEATURE_SOURCE_MAP = {
     "inventory_stress": "inventory",
 }
 
+from dotenv import load_dotenv
+load_dotenv()
+
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
@@ -80,7 +83,7 @@ def get_summary(df: pd.DataFrame, forecast: dict) -> dict:
             ),
             "main_drivers_explanation": (
                 f"The strongest associated drivers are "
-                f"{', '.join([d['feature'] for d in top_drivers[:3]]) or 'multiple factors'}, "
+                f"{', '.join([d['feature'] for d in top_drivers[:5]]) or 'multiple factors'}, "
                 f"which can raise input, transport, and inventory costs across the economy."
             ),
             "recommendation": (
@@ -96,17 +99,22 @@ def get_summary(df: pd.DataFrame, forecast: dict) -> dict:
         "predicted_gssi": float(forecast["predicted_gssi"]),
         "predicted_alert": forecast["predicted_alert"],
 
-        "summary": rule_based_summary,            
+        "summary": rule_based_summary,
         "rule_based_summary": rule_based_summary,
-        "ai_summary": ai_summary,
 
-        "top_drivers": top_drivers[:3],
+        "ai_summary": ai_summary.get("inflation_risk_summary", rule_based_summary),
+        "ai_explanation": ai_summary.get("main_drivers_explanation", "Explanation unavailable."),
+        "ai_recommendation": ai_summary.get("recommendation", "Monitor conditions closely."),
+
+        "top_drivers": top_drivers[:5],
         "driver_source_groups": summarize_driver_sources(top_drivers[:5]),
 
-        "feature_sources_used": [
+        "active_feature_sources": [
             "fred",
             "inventory",
             "market",
+        ],
+        "future_feature_sources": [
             "news",
             "trends",
         ],
@@ -170,19 +178,19 @@ def _generate_ai_summary(
         "forecast_week": str(forecast["forecast_week"]),
         "predicted_gssi": float(forecast["predicted_gssi"]),
         "predicted_alert": forecast["predicted_alert"],
-        "top_drivers": top_drivers[:3],
+        "top_drivers": top_drivers[:5],
         "driver_source_groups": summarize_driver_sources(top_drivers[:5]),
     }
 
     response = client.responses.create(
-        model="gpt-5.4",
+        model="gpt-5",
         input=[
             {
                 "role": "system",
                 "content": (
                     "You are a macro-financial analyst. "
-                    "The system integrates multiple signal groups: "
-                    "macro indicators (FRED), inventory data, market signals, news signals, and search trends. "
+                    "The system currently uses macro indicators (FRED), inventory data, and market signals. "
+                    "It is designed to incorporate news signals and search trends in future iterations. "
                     "Use both the top drivers and the driver source groups to explain results. "
                     "Return valid JSON only with exactly these keys: "
                     "inflation_risk_summary, main_drivers_explanation, recommendation. "
@@ -204,7 +212,20 @@ def _generate_ai_summary(
     )
 
     text = response.output_text.strip()
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except Exception:
+        return {
+            "inflation_risk_summary": (
+                "AI output parsing failed. Use the rule-based summary as the primary interpretation."
+            ),
+            "main_drivers_explanation": (
+                "Unable to parse the model response. Refer to the top driver correlations instead."
+            ),
+            "recommendation": (
+                "Monitor supply, transport, and market indicators while using the fallback summary."
+            ),
+        }
 
 
 def _trend_label(recent_gssi_values) -> str:
