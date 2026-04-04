@@ -35,7 +35,6 @@ API data ingestion
 
 ```text
 hackathon/
-└── backend/
     ├── app/
     │   ├── main.py
     │   ├── data_sources.py
