@@ -1,5 +1,4 @@
 import pandas as pd
-import numpy as np
 from sklearn.preprocessing import StandardScaler
 
 
@@ -14,7 +13,7 @@ def standardize_date_column(df: pd.DataFrame, date_col: str = "date") -> pd.Data
 
     df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
     df = df.dropna(subset=[date_col])
-    df = df.sort_values(date_col)
+    df = df.sort_values(date_col).reset_index(drop=True)
 
     return df
 
@@ -49,17 +48,22 @@ def resample_to_weekly(
     return weekly_df
 
 
-def merge_dataframes_on_date(dataframes: list[pd.DataFrame], date_col: str = "date") -> pd.DataFrame:
+def merge_dataframes_on_date(
+    dataframes: list[pd.DataFrame],
+    date_col: str = "date"
+) -> pd.DataFrame:
     """
     Merge multiple weekly dataframes on the date column using outer join.
     This keeps all weeks and lets us fill missing values later.
     """
-    if not dataframes:
+    valid_dfs = [df for df in dataframes if df is not None and not df.empty]
+
+    if not valid_dfs:
         raise ValueError("No dataframes provided for merging.")
 
-    merged_df = standardize_date_column(dataframes[0], date_col)
+    merged_df = standardize_date_column(valid_dfs[0], date_col)
 
-    for df in dataframes[1:]:
+    for df in valid_dfs[1:]:
         df = standardize_date_column(df, date_col)
         merged_df = pd.merge(merged_df, df, on=date_col, how="outer")
 
@@ -102,18 +106,52 @@ def handle_missing_values(
     return df
 
 
+def add_inventory_features(
+    df: pd.DataFrame,
+    date_col: str = "date",
+    inventory_prefix: str = "inventory_stress"
+) -> pd.DataFrame:
+    """
+    Add derived inventory stress features to help the model capture
+    short-term inventory buildup or drawdown.
+
+    Example:
+        inventory_stress_total -> inventory_stress_total_change_4w
+                                inventory_stress_total_pct_change_4w
+    """
+    df = df.copy()
+
+    inventory_cols = [
+        col for col in df.columns
+        if col != date_col and col.startswith(inventory_prefix)
+    ]
+
+    for col in inventory_cols:
+        df[f"{col}_change_4w"] = df[col].diff(4)
+        df[f"{col}_pct_change_4w"] = df[col].pct_change(4)
+
+    return df
+
+
 def remove_outliers_zscore(
     df: pd.DataFrame,
     threshold: float = 3.0,
-    date_col: str = "date"
+    date_col: str = "date",
+    exclude_cols: list[str] | None = None
 ) -> pd.DataFrame:
     """
     Clip extreme outliers using z-score threshold.
     Instead of dropping rows, this caps values at threshold boundaries.
     """
     df = df.copy()
+    exclude_cols = exclude_cols or []
 
-    numeric_cols = [col for col in df.columns if col != date_col and pd.api.types.is_numeric_dtype(df[col])]
+    numeric_cols = [
+        col for col in df.columns
+        if col != date_col
+        and col not in exclude_cols
+        and pd.api.types.is_numeric_dtype(df[col])
+    ]
 
     for col in numeric_cols:
         mean = df[col].mean()
@@ -135,14 +173,16 @@ def scale_features(
 ) -> tuple[pd.DataFrame, StandardScaler]:
     """
     Standardize numeric features so they are centered around 0
-    with unit variance. This is important before index construction
-    and especially before LSTM training.
+    with unit variance.
     """
     df = df.copy()
 
-    numeric_cols = [col for col in df.columns if col != date_col and pd.api.types.is_numeric_dtype(df[col])]
-    scaler = StandardScaler()
+    numeric_cols = [
+        col for col in df.columns
+        if col != date_col and pd.api.types.is_numeric_dtype(df[col])
+    ]
 
+    scaler = StandardScaler()
     df[numeric_cols] = scaler.fit_transform(df[numeric_cols])
 
     return df, scaler
@@ -150,30 +190,50 @@ def scale_features(
 
 def preprocess_pipeline(
     raw_dataframes: list[pd.DataFrame],
+    weekly_methods: list[str] | None = None,
     date_col: str = "date",
-    weekly_method: str = "mean",
+    default_weekly_method: str = "mean",
     fill_method: str = "ffill_bfill",
     apply_outlier_clipping: bool = True,
+    add_inventory_derived_features: bool = True,
 ) -> tuple[pd.DataFrame, StandardScaler]:
     """
     Full preprocessing pipeline:
     1. Standardize dates
-    2. Resample each source to weekly
+    2. Resample each source to weekly using per-source methods
     3. Merge all sources
     4. Handle missing values
-    5. Clip outliers
-    6. Scale numeric features
+    5. Add inventory-derived features
+    6. Clip outliers
+    7. Scale numeric features
     """
-    weekly_dfs = [
-        resample_to_weekly(df, date_col=date_col, method=weekly_method)
-        for df in raw_dataframes
-    ]
+    if not raw_dataframes:
+        raise ValueError("raw_dataframes cannot be empty.")
+
+    if weekly_methods is not None and len(weekly_methods) != len(raw_dataframes):
+        raise ValueError("weekly_methods must have the same length as raw_dataframes.")
+
+    weekly_dfs = []
+    for i, df in enumerate(raw_dataframes):
+        method = weekly_methods[i] if weekly_methods is not None else default_weekly_method
+        weekly_dfs.append(resample_to_weekly(df, date_col=date_col, method=method))
 
     merged_df = merge_dataframes_on_date(weekly_dfs, date_col=date_col)
     clean_df = handle_missing_values(merged_df, date_col=date_col, fill_method=fill_method)
 
+    if add_inventory_derived_features:
+        clean_df = add_inventory_features(clean_df, date_col=date_col)
+        clean_df = handle_missing_values(clean_df, date_col=date_col, fill_method=fill_method)
+
     if apply_outlier_clipping:
-        clean_df = remove_outliers_zscore(clean_df, date_col=date_col)
+        exclude_cols = ["news_count"] + [
+            col for col in clean_df.columns if "pct_change" in col
+        ]
+        clean_df = remove_outliers_zscore(
+            clean_df,
+            date_col=date_col,
+            exclude_cols=exclude_cols
+        )
 
     scaled_df, scaler = scale_features(clean_df, date_col=date_col)
 

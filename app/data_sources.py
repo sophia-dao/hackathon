@@ -1,7 +1,6 @@
 import os
 import time
-import random
-from typing import Dict, List
+from typing import List
 
 import pandas as pd
 import requests
@@ -25,7 +24,7 @@ def _to_numeric(series):
 
 
 def merge_data(dfs: List[pd.DataFrame]):
-    dfs = [df for df in dfs if not df.empty]
+    dfs = [df.copy() for df in dfs if df is not None and not df.empty]
 
     if not dfs:
         return pd.DataFrame()
@@ -37,12 +36,13 @@ def merge_data(dfs: List[pd.DataFrame]):
     for df in dfs[1:]:
         merged = merged.merge(df, on="date", how="outer")
 
-    return merged.sort_values("date")
+    return merged.sort_values("date").reset_index(drop=True)
 
 
 def to_monthly(df, method="mean"):
+    df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
-    df = df.set_index("date")
+    df = df.set_index("date").sort_index()
 
     if method == "sum":
         df = df.resample("MS").sum()
@@ -65,7 +65,7 @@ def fetch_fred(series_id, start="2018-01-01"):
         "observation_start": start,
     }
 
-    r = requests.get(FRED_URL, params=params)
+    r = requests.get(FRED_URL, params=params, timeout=30)
     r.raise_for_status()
 
     data = r.json()["observations"]
@@ -83,9 +83,23 @@ def fetch_fred_features():
     delivery = fetch_fred("DTCDFNA066MNFRBPHI").rename(columns={"DTCDFNA066MNFRBPHI": "delivery_time"})
 
     return [
-        to_monthly(oil),
-        to_monthly(freight),
-        to_monthly(delivery),
+        to_monthly(oil, method="mean"),        # price-like
+        to_monthly(freight, method="last"),    # monthly business indicator
+        to_monthly(delivery, method="last"),   # monthly survey indicator
+    ]
+
+
+def fetch_inventory_features():
+    total_inv_ratio = fetch_fred("ISRATIO").rename(columns={"ISRATIO": "inventory_stress_total"})
+    mfg_inv_ratio = fetch_fred("MNFCTRIRSA").rename(columns={"MNFCTRIRSA": "inventory_stress_mfg"})
+    wholesale_inv_ratio = fetch_fred("WHLSLRIRSA").rename(columns={"WHLSLRIRSA": "inventory_stress_wholesale"})
+    retail_inv_ratio = fetch_fred("RETAILIRSA").rename(columns={"RETAILIRSA": "inventory_stress_retail"})
+
+    return [
+        to_monthly(total_inv_ratio, method="last"),
+        to_monthly(mfg_inv_ratio, method="last"),
+        to_monthly(wholesale_inv_ratio, method="last"),
+        to_monthly(retail_inv_ratio, method="last"),
     ]
 
 
@@ -101,14 +115,14 @@ def fetch_market_data():
         interval="1d",
         group_by="column",
         progress=False,
+        auto_adjust=False,
     )
 
     return df
 
 
 def compute_market_features(df):
-    close_df = df["Close"]  # works with group_by="column"
-
+    close_df = df["Close"].copy()
     features = []
 
     for ticker in close_df.columns:
@@ -120,13 +134,11 @@ def compute_market_features(df):
         temp[f"{ticker}_return"] = temp[f"{ticker}_close"].pct_change()
         temp[f"{ticker}_vol"] = temp[f"{ticker}_return"].rolling(5).std()
 
-        temp = to_monthly(temp)
-
+        temp = to_monthly(temp, method="mean")
         features.append(temp)
 
     merged = merge_data(features)
 
-    # rename for clarity
     return merged.rename(columns={
         "^GSPC_close": "sp500_close",
         "^GSPC_return": "sp500_return",
@@ -152,27 +164,32 @@ def fetch_news():
     }
 
     for i in range(3):
-        r = requests.get(GDELT_URL, params=params)
-
-        if r.status_code == 429:
-            time.sleep(2 ** i)
-            continue
-
         try:
-            data = r.json()["articles"]
-            df = pd.DataFrame(data)
+            r = requests.get(GDELT_URL, params=params, timeout=30)
 
-            df["date"] = pd.to_datetime(df["seendate"])
+            if r.status_code == 429:
+                time.sleep(2 ** i)
+                continue
+
+            r.raise_for_status()
+            data = r.json().get("articles", [])
+
+            if not data:
+                return pd.DataFrame(columns=["date", "news_count"])
+
+            df = pd.DataFrame(data)
+            df["date"] = pd.to_datetime(df["seendate"], errors="coerce")
+            df = df.dropna(subset=["date"])
 
             daily = df.groupby(df["date"].dt.date).size().reset_index(name="news_count")
             daily.columns = ["date", "news_count"]
 
             return to_monthly(daily, method="sum")
 
-        except:
+        except Exception:
             time.sleep(1)
 
-    return pd.DataFrame()
+    return pd.DataFrame(columns=["date", "news_count"])
 
 
 # =============================
@@ -181,26 +198,35 @@ def fetch_news():
 def fetch_trends():
     try:
         pytrends = TrendReq()
-        pytrends.build_payload(["trend_supply_chain", "trend_shipping_delays"])
+        pytrends.build_payload(["supply chain", "shipping delays"])
 
         df = pytrends.interest_over_time().reset_index()
-        df = df.drop(columns=["isPartial"])
+        if "isPartial" in df.columns:
+            df = df.drop(columns=["isPartial"])
 
-        return to_monthly(df)
+        return to_monthly(df, method="mean").rename(columns={
+            "supply chain": "trend_supply_chain",
+            "shipping delays": "trend_shipping_delays",
+        })
 
-    except:
+    except Exception:
         print("Trends failed")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["date", "trend_supply_chain", "trend_shipping_delays"])
 
 
 # =============================
-# BUILD FEATURE MATRIX
+# BUILD FEATURE SOURCES
 # =============================
 def build_features():
+    """
+    Return a list of source dataframes, not one merged dataframe.
+    This lets preprocessing choose different weekly resampling
+    methods per source.
+    """
     fred = fetch_fred_features()
+    inventory = fetch_inventory_features()
     market = compute_market_features(fetch_market_data())
     news = fetch_news()
     trends = fetch_trends()
 
-    return merge_data(fred + [market, news, trends])
-
+    return fred + inventory + [market, news, trends]
