@@ -8,11 +8,12 @@ Exposes:
 
 import pandas as pd
 
+# Thresholds match the normalized 0-100 GSSI scale
 ALERT_THRESHOLDS = [
-    (-float("inf"), -0.5, "Low"),
-    (-0.5, 0.5, "Moderate"),
-    (0.5, 1.5, "High"),
-    (1.5, float("inf"), "Critical"),
+    (-float("inf"), 25,  "Low"),
+    (25,            50,  "Moderate"),
+    (50,            75,  "High"),
+    (75,  float("inf"),  "Critical"),
 ]
 
 ALERT_ORDER = {"Low": 0, "Moderate": 1, "High": 2, "Critical": 3}
@@ -45,7 +46,7 @@ def generate_alerts(df: pd.DataFrame, forecast: dict) -> pd.DataFrame:
 
     # Append the forecast as a new row
     forecast_row = pd.DataFrame([{
-        date_col: forecast["forecast_week"],
+        date_col: pd.to_datetime(forecast["forecast_week"]),
         "gssi": forecast["predicted_gssi"],
         "alert": forecast["predicted_alert"],
     }])

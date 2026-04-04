@@ -17,7 +17,7 @@ def execute_pipeline():
     if features.empty:
         raise HTTPException(status_code=500, detail="No data fetched")
 
-    clean_data = preprocess_pipeline(features)
+    clean_data, _ = preprocess_pipeline([features])
     if clean_data.empty:
         raise HTTPException(status_code=500, detail="Preprocessing failed")
 
@@ -25,11 +25,15 @@ def execute_pipeline():
     if gssi_df.empty:
         raise HTTPException(status_code=500, detail="GSSI build failed")
 
-    X, y = build_sequences(gssi_df)
+    # Merge feature columns back so driver analysis has data to correlate
+    date_col = "week" if "week" in gssi_df.columns else "date"
+    feature_cols = [c for c in clean_data.columns if c != date_col]
+    gssi_df = gssi_df.merge(clean_data[[date_col] + feature_cols], on=date_col, how="left")
+    X, y, _ = build_sequences(gssi_df, drop_cols=[date_col])
     if len(X) == 0 or len(y) == 0:
         raise HTTPException(status_code=500, detail="Sequence building failed")
 
-    forecast = forecast_next_week(X, y)
+    forecast = forecast_next_week(gssi_df)
 
     alerts = generate_alerts(gssi_df, forecast)
     if isinstance(alerts, pd.DataFrame):
@@ -58,6 +62,52 @@ def run_pipeline():
             "summary": get_summary(gssi_df, forecast),
             "date_column_used": date_col,
         }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/current")
+def current_endpoint():
+    try:
+        gssi_df, forecast = execute_pipeline()
+        date_col = "week" if "week" in gssi_df.columns else "date"
+        latest = gssi_df.sort_values(date_col).iloc[-1]
+        alert = latest["alert"] if "alert" in gssi_df.columns else None
+        return {
+            "week": str(latest[date_col]),
+            "gssi": round(float(latest["gssi"]), 4),
+            "alert": alert,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/history")
+def history_endpoint():
+    try:
+        gssi_df, _ = execute_pipeline()
+        date_col = "week" if "week" in gssi_df.columns else "date"
+        gssi_df = gssi_df.sort_values(date_col)
+        cols = [date_col, "gssi"] + (["alert"] if "alert" in gssi_df.columns else [])
+        return {"history": gssi_df[cols].to_dict(orient="records")}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/forecast")
+def forecast_endpoint():
+    try:
+        _, forecast = execute_pipeline()
+        return forecast
 
     except HTTPException:
         raise

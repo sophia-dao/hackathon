@@ -9,15 +9,6 @@ Exposes:
 import pandas as pd
 
 
-FEATURE_COLS = [
-    "freight_cost",
-    "supplier_delay",
-    "oil_price",
-    "market_volatility",
-    "inventory_stress",
-]
-
-
 def get_drivers(df: pd.DataFrame) -> list:
     """
     Returns the top contributing indicators ranked by absolute correlation
@@ -27,7 +18,11 @@ def get_drivers(df: pd.DataFrame) -> list:
         {"feature": str, "correlation": float, "impact": str}
     where impact is "positive" or "negative".
     """
-    available = [c for c in FEATURE_COLS if c in df.columns]
+    exclude = {"gssi", "date", "week", "alert"}
+    available = [
+        c for c in df.columns
+        if c not in exclude and pd.api.types.is_numeric_dtype(df[c])
+    ]
 
     results = []
     for col in available:
@@ -93,10 +88,10 @@ def get_summary(df: pd.DataFrame, forecast: dict) -> dict:
 
 
 def _gssi_to_alert(value: float) -> str:
-    if value < -0.5:
+    if value < 25:
         return "Low"
-    elif value < 0.5:
+    elif value < 50:
         return "Moderate"
-    elif value < 1.5:
+    elif value < 75:
         return "High"
     return "Critical"

@@ -20,10 +20,10 @@ _model = None  # cached model
 LOOKBACK = 8  # weeks of history required
 
 ALERT_THRESHOLDS = [
-    (-np.inf, -0.5, "Low"),
-    (-0.5, 0.5, "Moderate"),
-    (0.5, 1.5, "High"),
-    (1.5, np.inf, "Critical"),
+    (-np.inf, 25, "Low"),
+    (25,      50, "Moderate"),
+    (50,      75, "High"),
+    (75,  np.inf, "Critical"),
 ]
 
 
