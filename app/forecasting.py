@@ -2,17 +2,17 @@ import numpy as np
 import pandas as pd
 from datetime import timedelta
 from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.layers import LSTM, Dense, Input
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.callbacks import EarlyStopping
 
 LOOKBACK = 8
 
 
-def _build_model(lookback: int) -> Sequential:
+def _build_model(lookback: int):
+    from tensorflow.keras.layers import LSTM, Dense, Input
+    from tensorflow.keras.models import Sequential
+
     model = Sequential([
         Input(shape=(lookback, 1)),
-        LSTM(64, return_sequences=False),
+        LSTM(32, return_sequences=False),
         Dense(1)
     ])
     model.compile(optimizer="adam", loss="mse")
@@ -20,18 +20,13 @@ def _build_model(lookback: int) -> Sequential:
 
 
 def train_lstm_model(df: pd.DataFrame, lookback: int = LOOKBACK):
-    """
-    Train LSTM on the gssi column.
+    from tensorflow.keras.callbacks import EarlyStopping
 
-    Args:
-        df: DataFrame with at least columns ['week', 'gssi']
-        lookback: number of past weeks per training sequence
-
-    Returns:
-        (model, scaler)
-    """
     if "gssi" not in df.columns:
         raise ValueError("DataFrame must contain a 'gssi' column.")
+
+    if "week" not in df.columns:
+        raise ValueError("DataFrame must contain a 'week' column.")
 
     if len(df) <= lookback:
         raise ValueError(
@@ -55,15 +50,15 @@ def train_lstm_model(df: pd.DataFrame, lookback: int = LOOKBACK):
 
     early_stopping = EarlyStopping(
         monitor="loss",
-        patience=5,
+        patience=3,
         restore_best_weights=True
     )
 
     model.fit(
         X,
         y,
-        epochs=50,
-        batch_size=16,
+        epochs=20,
+        batch_size=8,
         verbose=0,
         callbacks=[early_stopping]
     )
@@ -77,9 +72,6 @@ def forecast_next_week(
     scaler: MinMaxScaler,
     lookback: int = LOOKBACK,
 ) -> dict:
-    """
-    Forecast next week's GSSI from the last `lookback` weeks.
-    """
     if "week" not in df.columns or "gssi" not in df.columns:
         raise ValueError("DataFrame must contain 'week' and 'gssi' columns.")
 
@@ -103,6 +95,12 @@ def forecast_next_week(
         "predicted_gssi": round(predicted_gssi, 4),
         "predicted_alert": _alert_label(predicted_gssi),
     }
+
+
+def train_and_forecast(df: pd.DataFrame, lookback: int = LOOKBACK):
+    model, scaler = train_lstm_model(df, lookback=lookback)
+    forecast = forecast_next_week(df, model, scaler, lookback=lookback)
+    return forecast, model, scaler
 
 
 def _alert_label(gssi_value: float) -> str:
