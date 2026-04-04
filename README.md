@@ -17,7 +17,7 @@ This backend system:
 
 ### 🔄 Backend Flow
 
-```
+```text
 API data ingestion
 → preprocessing (clean + align + resample weekly)
 → normalized feature table
@@ -33,26 +33,25 @@ API data ingestion
 
 ## 🧩 Project Structure
 
-```
-backend/
-├── app/
-│   ├── main.py
-│   ├── data_sources.py          # Fetch external API data
-│   ├── preprocessing.py        # Clean, merge, resample, normalize
-│   ├── index_builder.py        # Compute GSSI + driver contributions
-│   ├── sequence_builder.py     # Build LSTM sequences
-│   ├── forecasting.py          # Train & run LSTM model
-│   ├── alerts.py               # Assign early warning labels
-│   ├── analytics.py            # Generate summaries/insights
-│   └── routes/
-│       └── gssi.py             # API endpoints
-│
-├── data/
-│   ├── raw/
-│   └── processed/
-│
-├── requirements.txt
-└── README.md
+```text
+hackathon/
+└── backend/
+    ├── app/
+    │   ├── main.py
+    │   ├── data_sources.py
+    │   ├── preprocessing.py
+    │   ├── index_builder.py
+    │   ├── sequence_builder.py
+    │   ├── forecasting.py
+    │   ├── alerts.py
+    │   ├── analytics.py
+    │   └── routes/
+    │       └── gssi.py
+    │
+    ├── data/
+    ├── venv/
+    ├── requirements.txt
+    └── README.md
 ```
 
 ---
@@ -108,7 +107,7 @@ Main task: AI + Forecast + Insights
 
 Initial version uses a weighted sum of normalized indicators:
 
-```
+```text
 GSSI = w1 * freight_cost
      + w2 * supplier_delay
      + w3 * oil_price
@@ -118,7 +117,7 @@ GSSI = w1 * freight_cost
 
 Default weights (MVP):
 
-```
+```text
 w1 = w2 = w3 = w4 = w5 = 0.2
 ```
 
@@ -184,26 +183,65 @@ GSSI values are mapped to warning levels:
 
 ```bash
 git clone <repo-url>
-cd backend
+cd hackathon/backend
 ```
 
-### 2. Install dependencies
+### 2. Create a virtual environment
+
+#### macOS / Linux
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+#### Windows
+
+```bash
+python -m venv venv
+venv\Scripts\activate
+```
+
+### 3. Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Run the server
+### 4. Run the FastAPI server
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-### 4. Open API docs
+### 5. Open the API docs
 
-```
+```text
 http://127.0.0.1:8000/docs
 ```
+
+---
+
+## ▶️ Quick Run Commands
+
+### Start the backend
+
+#### macOS / Linux
+
+```bash
+cd hackathon/backend
+source venv/bin/activate
+uvicorn app.main:app --reload
+```
+
+#### Windows
+
+```bash
+cd hackathon\backend
+venv\Scripts\activate
+uvicorn app.main:app --reload
+```
+
 
 ---
 
