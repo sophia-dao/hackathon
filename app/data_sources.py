@@ -204,14 +204,3 @@ def build_features():
 
     return merge_data(fred + [market, news, trends])
 
-
-# =============================
-# FINAL DATASET
-# =============================
-def build_dataset():
-    target = load_gscsi()
-    features = build_features()
-
-    df = target.merge(features, on="date", how="left")
-
-    return df.sort_values("date")
