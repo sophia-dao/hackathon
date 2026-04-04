@@ -75,6 +75,35 @@ All features are:
 
 ---
 
+## Expected Output(Sophia)
+Main task: Data fetching + GSSI score
+
+```
+df.columns = [
+    "week",
+    "freight_cost",
+    "supplier_delay",
+    "oil_price",
+    "market_volatility",
+    "inventory_stress",
+    "gssi",
+    "alert"
+]
+```
+
+---
+
+## Expected Output (Andy)
+Main task: AI + Forecast + Insights
+
+```
+{
+  "forecast_week": "...",
+  "predicted_gssi": 1.25,
+  "predicted_alert": "High"
+}
+```
+
 ## 📈 GSSI Calculation
 
 Initial version uses a weighted sum of normalized indicators:
