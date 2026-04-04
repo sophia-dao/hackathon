@@ -1,7 +1,7 @@
 import os
 import time
 import random
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import pandas as pd
 import requests
@@ -12,113 +12,162 @@ from pytrends.request import TrendReq
 load_dotenv()
 
 FRED_API_KEY = os.getenv("FRED_API_KEY")
-EIA_API_KEY = os.getenv("EIA_API_KEY")
 
-FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
-GDELT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
-
-
-# -----------------------------
-# Utility
-# -----------------------------
-class DataSourceError(Exception):
-    pass
+FRED_URL = "https://api.stlouisfed.org/fred/series/observations"
+GDELT_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 
 
-def _safe_numeric(series: pd.Series) -> pd.Series:
+# =============================
+# UTIL
+# =============================
+def _to_numeric(series):
     return pd.to_numeric(series, errors="coerce")
 
 
-# -----------------------------
-# FRED (Macro + Supply Chain)
-# -----------------------------
-def fetch_fred_series(series_id: str, start_date: str) -> pd.DataFrame:
-    if not FRED_API_KEY:
-        raise DataSourceError("Missing FRED_API_KEY")
+def merge_data(dfs: List[pd.DataFrame]):
+    dfs = [df for df in dfs if not df.empty]
 
+    if not dfs:
+        return pd.DataFrame()
+
+    for df in dfs:
+        df["date"] = pd.to_datetime(df["date"])
+
+    merged = dfs[0]
+    for df in dfs[1:]:
+        merged = merged.merge(df, on="date", how="outer")
+
+    return merged.sort_values("date")
+
+
+def to_monthly(df, method="mean"):
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.set_index("date")
+
+    if method == "sum":
+        df = df.resample("MS").sum()
+    elif method == "last":
+        df = df.resample("MS").last()
+    else:
+        df = df.resample("MS").mean()
+
+    return df.reset_index()
+
+
+# =============================
+# FRED DATA
+# =============================
+def fetch_fred(series_id, start="2018-01-01"):
     params = {
         "series_id": series_id,
         "api_key": FRED_API_KEY,
         "file_type": "json",
-        "observation_start": start_date,
+        "observation_start": start,
     }
 
-    response = requests.get(FRED_BASE_URL, params=params)
-    response.raise_for_status()
+    r = requests.get(FRED_URL, params=params)
+    r.raise_for_status()
 
-    data = response.json()["observations"]
+    data = r.json()["observations"]
 
     df = pd.DataFrame(data)[["date", "value"]]
     df["date"] = pd.to_datetime(df["date"])
-    df[series_id] = _safe_numeric(df["value"])
-    df = df.drop(columns=["value"])
+    df[series_id] = _to_numeric(df["value"])
 
-    return df
-
-
-def fetch_supply_chain_fred_data(start_date="2018-01-01"):
-    return {
-        "oil": fetch_fred_series("DCOILWTICO", start_date),
-        "freight": fetch_fred_series("FRGEXPUSM649NCIS", start_date),
-        "delivery_time": fetch_fred_series("DTCDFNA066MNFRBPHI", start_date),
-    }
+    return df.drop(columns=["value"])
 
 
-# -----------------------------
-# Yahoo Finance (Market Data)
-# -----------------------------
+def fetch_fred_features():
+    oil = fetch_fred("DCOILWTICO").rename(columns={"DCOILWTICO": "oil"})
+    freight = fetch_fred("FRGEXPUSM649NCIS").rename(columns={"FRGEXPUSM649NCIS": "freight"})
+    delivery = fetch_fred("DTCDFNA066MNFRBPHI").rename(columns={"DTCDFNA066MNFRBPHI": "delivery_time"})
+
+    return [
+        to_monthly(oil),
+        to_monthly(freight),
+        to_monthly(delivery),
+    ]
+
+
+# =============================
+# MARKET DATA
+# =============================
 def fetch_market_data():
     tickers = ["^GSPC", "^DJI", "^IXIC"]
 
-    df = yf.download(tickers, period="5y", interval="1d", progress=False)
+    df = yf.download(
+        tickers,
+        period="5y",
+        interval="1d",
+        group_by="column",
+        progress=False,
+    )
 
     return df
 
 
 def compute_market_features(df):
-    records = []
+    close_df = df["Close"]  # works with group_by="column"
 
-    tickers = list(set(col[0] for col in df.columns))
+    features = []
 
-    for ticker in tickers:
-        temp = df[ticker][["Close"]].copy()
-        temp["return"] = temp["Close"].pct_change()
-        temp["volatility"] = temp["return"].rolling(5).std()
-        temp["ticker"] = ticker
-        temp["date"] = temp.index
+    for ticker in close_df.columns:
+        temp = pd.DataFrame({
+            "date": close_df.index,
+            f"{ticker}_close": close_df[ticker],
+        })
 
-        records.append(temp.reset_index(drop=True))
+        temp[f"{ticker}_return"] = temp[f"{ticker}_close"].pct_change()
+        temp[f"{ticker}_vol"] = temp[f"{ticker}_return"].rolling(5).std()
 
-    return pd.concat(records)
+        temp = to_monthly(temp)
+
+        features.append(temp)
+
+    merged = merge_data(features)
+
+    # rename for clarity
+    return merged.rename(columns={
+        "^GSPC_close": "sp500_close",
+        "^GSPC_return": "sp500_return",
+        "^GSPC_vol": "sp500_vol",
+        "^DJI_close": "dow_close",
+        "^DJI_return": "dow_return",
+        "^DJI_vol": "dow_vol",
+        "^IXIC_close": "nasdaq_close",
+        "^IXIC_return": "nasdaq_return",
+        "^IXIC_vol": "nasdaq_vol",
+    })
 
 
-# -----------------------------
-# GDELT (News Sentiment Proxy)
-# -----------------------------
-def fetch_gdelt_article_list(query, max_records=50, retries=3):
+# =============================
+# NEWS (GDELT)
+# =============================
+def fetch_news():
     params = {
-        "query": query,
+        "query": "supply chain",
         "mode": "ArtList",
-        "maxrecords": max_records,
+        "maxrecords": 30,
         "format": "json",
     }
 
-    for attempt in range(retries):
-        response = requests.get(GDELT_DOC_URL, params=params)
+    for i in range(3):
+        r = requests.get(GDELT_URL, params=params)
 
-        if response.status_code == 429:
-            wait = (2 ** attempt) + random.uniform(0, 1)
-            print(f"[GDELT] Rate limited. Waiting {wait:.2f}s")
-            time.sleep(wait)
+        if r.status_code == 429:
+            time.sleep(2 ** i)
             continue
 
         try:
-            response.raise_for_status()
-            data = response.json()["articles"]
-
+            data = r.json()["articles"]
             df = pd.DataFrame(data)
 
-            return df[["seendate", "title"]]
+            df["date"] = pd.to_datetime(df["seendate"])
+
+            daily = df.groupby(df["date"].dt.date).size().reset_index(name="news_count")
+            daily.columns = ["date", "news_count"]
+
+            return to_monthly(daily, method="sum")
 
         except:
             time.sleep(1)
@@ -126,51 +175,43 @@ def fetch_gdelt_article_list(query, max_records=50, retries=3):
     return pd.DataFrame()
 
 
-def fetch_news_signal():
-    df = fetch_gdelt_article_list("supply chain", max_records=30)
-
-    if df.empty:
-        return pd.DataFrame(columns=["date", "article_count"])
-
-    df["date"] = pd.to_datetime(df["seendate"]).dt.date
-
-    return (
-        df.groupby("date")
-        .size()
-        .reset_index(name="article_count")
-    )
-
-
-# -----------------------------
-# Google Trends (Optional)
-# -----------------------------
-def fetch_google_trends():
+# =============================
+# GOOGLE TRENDS (OPTIONAL)
+# =============================
+def fetch_trends():
     try:
         pytrends = TrendReq()
-        pytrends.build_payload(["supply chain", "shipping delays"])
+        pytrends.build_payload(["trend_supply_chain", "trend_shipping_delays"])
 
         df = pytrends.interest_over_time().reset_index()
+        df = df.drop(columns=["isPartial"])
 
-        return df.drop(columns=["isPartial"])
+        return to_monthly(df)
 
     except:
-        print("[Trends] Failed — skipping")
+        print("Trends failed")
         return pd.DataFrame()
 
 
-# -----------------------------
-# Merge Helper
-# -----------------------------
-def merge_data(data_dict: Dict[str, pd.DataFrame]):
-    dfs = []
+# =============================
+# BUILD FEATURE MATRIX
+# =============================
+def build_features():
+    fred = fetch_fred_features()
+    market = compute_market_features(fetch_market_data())
+    news = fetch_news()
+    trends = fetch_trends()
 
-    for df in data_dict.values():
-        df["date"] = pd.to_datetime(df["date"])
-        dfs.append(df)
+    return merge_data(fred + [market, news, trends])
 
-    merged = dfs[0]
 
-    for df in dfs[1:]:
-        merged = merged.merge(df, on="date", how="outer")
+# =============================
+# FINAL DATASET
+# =============================
+def build_dataset():
+    target = load_gscsi()
+    features = build_features()
 
-    return merged.sort_values("date")
+    df = target.merge(features, on="date", how="left")
+
+    return df.sort_values("date")
