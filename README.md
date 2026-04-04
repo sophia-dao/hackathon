@@ -1,318 +1,225 @@
-# 🌍 Global Supply Chain Stress Index (GSSI)
+# StressWatch — Global Supply Chain Stress Index
 
-## 📌 Overview
-
-The **Global Supply Chain Stress Index (GSSI)** is an early-warning system designed to monitor and forecast supply chain disruptions and their macro-financial impact.
-
-This backend system:
-
-* Aggregates global economic and logistics indicators
-* Transforms them into a unified weekly stress index (GSSI)
-* Forecasts future stress levels using LSTM
-* Generates actionable alerts and summaries for decision-makers
+An early-warning system that measures and forecasts global supply chain stress and its macro-financial implications for investors, policymakers, and corporations.
 
 ---
 
-## 🧠 System Architecture
-
-### 🔄 Backend Flow
+## System Architecture
 
 ```text
-API data ingestion
-→ preprocessing (clean + align + resample weekly)
-→ normalized feature table
-→ GSSI computation
-→ driver contribution analysis
-→ LSTM sequence generation
-→ forecasting (next-week GSSI)
-→ alert labeling + summary generation
-→ API endpoints
+Data Ingestion (FRED, yfinance, GDELT, Google Trends)
+→ Preprocessing (clean, align, resample to weekly)
+→ GSSI Computation (signed weighted sum)
+→ LSTM Forecasting (next-week GSSI)
+→ Alert Labeling
+→ Driver Correlation Analysis
+→ AI Narrative + Recommendations (OpenAI)
+→ REST API (FastAPI)
+→ Dashboard (React + Recharts)
 ```
 
 ---
 
-## 🧩 Project Structure
+## Project Structure
 
 ```text
 hackathon/
-    ├── app/
-    │   ├── main.py
-    │   ├── data_sources.py
-    │   ├── preprocessing.py
-    │   ├── index_builder.py
-    │   ├── sequence_builder.py
-    │   ├── forecasting.py
-    │   ├── alerts.py
-    │   ├── analytics.py
-    │   └── routes/
-    │       └── gssi.py
-    │
-    ├── test/
-    ├── venv/
-    ├── requirements.txt
-    └── README.md
+├── app/
+│   ├── main.py               # FastAPI app entry point
+│   ├── data_sources.py       # FRED, yfinance, GDELT, Google Trends ingestion
+│   ├── preprocessing.py      # Cleaning, resampling, scaling
+│   ├── index_builder.py      # GSSI computation + signed weights
+│   ├── sequence_builder.py   # LSTM sequence preparation
+│   ├── forecasting.py        # Next-week GSSI forecast
+│   ├── alerts.py             # Alert level labeling
+│   ├── analytics.py          # Driver analysis + OpenAI summaries
+│   └── routes/
+│       └── gssi.py           # API endpoints + in-memory cache
+│
+├── frontend/
+│   ├── index.html
+│   ├── package.json
+│   └── src/
+│       ├── App.jsx            # Root layout, data fetching, tab routing
+│       ├── api.js             # API client functions
+│       ├── utils.js           # Shared formatters and constants
+│       └── components/
+│           ├── Sidebar.jsx        # Icon navigation sidebar
+│           ├── MetricCard.jsx     # Top KPI cards
+│           ├── HistoryChart.jsx   # Historical GSSI area chart
+│           ├── ForecastCard.jsx   # Forecast panel
+│           ├── DriversChart.jsx   # Horizontal bar chart (dashboard)
+│           ├── DriversView.jsx    # Full drivers tab
+│           ├── OverviewView.jsx   # Overview tab with AI cards
+│           ├── ForecastView.jsx   # Forecast tab
+│           ├── AlertsView.jsx     # Alerts tab
+│           ├── RecentAlerts.jsx   # Alert history widget
+│           ├── AlertBadge.jsx     # Colour-coded alert pill
+│           └── SystemView.jsx     # API explorer tab
+│
+├── test/
+├── venv/
+├── .env
+├── requirements.txt
+└── README.md
 ```
 
 ---
 
-## 📊 Core Features
+## Data Sources
 
-We use the following indicators to build GSSI:
-
-* 🚢 Freight Cost
-* 🏭 Supplier Delay
-* 🛢 Oil Price
-* 📉 Market Volatility (e.g., VIX)
-* 📦 Inventory Stress
-
-All features are:
-
-* aligned by date
-* resampled to **weekly frequency**
-* normalized before index computation
+| Source | Series / Ticker | Feature | Role |
+|---|---|---|---|
+| FRED | `DCOILWTICO` | `oil` | Stress indicator |
+| FRED | `FRGEXPUSM649NCIS` | `freight` | Stress indicator |
+| FRED | `WPU0561` | `transport_ppi` | Stress indicator |
+| FRED | `CSCICP03USM665S` | `consumer_confidence` | Health indicator |
+| yfinance | `^GSPC`, `^DJI`, `^IXIC` | Close / Return / Vol | Mixed |
+| GDELT | Supply chain articles | `news_count` | Stress indicator |
+| Google Trends | Supply chain / shipping | `trend_*` | Stress indicator |
 
 ---
 
-## Expected Output(Sophia)
-Main task: Data fetching + GSSI score
+## GSSI Computation
 
-```
-df.columns = [
-    "week",
-    "freight_cost",
-    "supplier_delay",
-    "oil_price",
-    "market_volatility",
-    "inventory_stress",
-    "gssi",
-    "alert"
-]
-```
-
----
-
-## Expected Output (Andy)
-Main task: AI + Forecast + Insights
-
-```
-{
-  "forecast_week": "...",
-  "predicted_gssi": 1.25,
-  "predicted_alert": "High"
-}
-```
-
-## 📈 GSSI Calculation
-
-Initial version uses a weighted sum of normalized indicators:
+Features are z-scored then combined via a signed weighted sum:
 
 ```text
-GSSI = w1 * freight_cost
-     + w2 * supplier_delay
-     + w3 * oil_price
-     + w4 * market_volatility
-     + w5 * inventory_stress
+GSSI = Σ (weight_i × z_score_i)   normalised to 0–100
 ```
 
-Default weights (MVP):
+Stress indicators carry **positive** weights; health indicators carry **negative** weights so that rising market confidence pulls GSSI down.
 
-```text
-w1 = w2 = w3 = w4 = w5 = 0.2
-```
-
----
-
-## 🤖 Forecasting (LSTM)
-
-### Model Setup
-
-* Input: past **8 weeks**
-* Output: **next-week GSSI**
-* Data frequency: weekly
-
-### Versions
-
-* ✅ V1: Univariate (GSSI only)
-* 🔜 V2: Multivariate (all indicators)
+| Feature | Weight |
+|---|---|
+| oil, freight | +0.12 each |
+| transport_ppi | +0.10 |
+| dow/sp500/nasdaq volatility | +0.08 each |
+| consumer_confidence | −0.10 |
+| sp500/dow/nasdaq close | −0.06 each |
 
 ---
 
-## 🚨 Alert System
+## Alert Levels
 
-GSSI values are mapped to warning levels:
-
-| GSSI Value | Alert Level |
-| ---------- | ----------- |
-| < -0.5     | Low         |
-| -0.5 – 0.5 | Moderate    |
-| 0.5 – 1.5  | High        |
-| > 1.5      | Critical    |
+| GSSI (0–100) | Level |
+|---|---|
+| 0 – 25 | Low |
+| 25 – 50 | Moderate |
+| 50 – 75 | High |
+| 75 – 100 | Critical |
 
 ---
 
-## 📡 API Endpoints
+## API Endpoints
 
-| Endpoint         | Description                       |
-| ---------------- | --------------------------------- |
-| `/gssi/current`  | Latest GSSI + alert               |
-| `/gssi/history`  | Historical GSSI                   |
-| `/gssi/forecast` | Next-week forecast                |
-| `/gssi/drivers`  | Top contributing indicators       |
-| `/gssi/summary`  | Generated macro-financial summary |
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/gssi/current` | Latest GSSI + alert |
+| GET | `/gssi/history` | Full historical GSSI |
+| GET | `/gssi/forecast` | Next-week forecast |
+| GET | `/gssi/drivers` | Indicator correlations + latest values |
+| GET | `/gssi/ai-summary` | AI narrative + recommendations |
+| POST | `/gssi/refresh` | Force cache refresh |
+| GET | `/gssi/cache-status` | Cache age and TTL |
 
----
-
-## 📦 Example Response
-
-### `/gssi/current`
-
-```json
-{
-  "week": "2026-03-29",
-  "gssi": 1.12,
-  "alert": "High"
-}
-```
+Responses are cached in memory for **1 hour** to avoid re-running the full pipeline on every request.
 
 ---
 
-## ⚙️ Setup Instructions
+## Dashboard Views
+
+| Tab | Content |
+|---|---|
+| Dashboard | KPI cards, historical chart, forecast, top drivers, recent alerts |
+| Overview | GSSI gauge, AI summary, investor / risk / policy recommendation cards |
+| Forecast | Next-week prediction with trend analysis |
+| Alerts | Full alert history |
+| Drivers | Correlation rankings with latest real values on hover |
+| System | Live API explorer |
+
+---
+
+## Setup
+
+### Prerequisites
+
+- Python 3.10+
+- Node.js 18+
+- FRED API key → [fred.stlouisfed.org/docs/api](https://fred.stlouisfed.org/docs/api/api_key.html)
+- OpenAI API key → [platform.openai.com](https://platform.openai.com)
 
 ### 1. Clone the repo
 
 ```bash
 git clone <repo-url>
-cd hackathon/backend
+cd hackathon
 ```
 
-### 2. Create a virtual environment
+### 2. Configure environment variables
 
-#### macOS / Linux
+Create a `.env` file in `hackathon/`:
+
+```env
+FRED_API_KEY=your_fred_key
+OPENAI_API_KEY=your_openai_key
+```
+
+### 3. Backend setup
 
 ```bash
 python3 -m venv venv
-source venv/bin/activate
-```
-
-#### Windows
-
-```bash
-python -m venv venv
-venv\Scripts\activate
-```
-
-### 3. Install dependencies
-
-```bash
+source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 4. Run the FastAPI server
+### 4. Start the backend
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-### 5. Open the API docs
+API runs at `http://localhost:8000` — interactive docs at `http://localhost:8000/docs`
 
-```text
-http://127.0.0.1:8000/docs
-```
-
----
-
-## ▶️ Quick Run Commands
-
-### Start the backend
-
-#### macOS / Linux
+### 5. Frontend setup
 
 ```bash
-cd hackathon/backend
-source venv/bin/activate
-uvicorn app.main:app --reload
+cd frontend
+npm install
 ```
 
-#### Windows
+### 6. Start the frontend
 
 ```bash
-cd hackathon\backend
-venv\Scripts\activate
-uvicorn app.main:app --reload
+npm run dev
 ```
 
+Dashboard runs at `http://localhost:5173`
 
 ---
 
-## 🛠 Tech Stack
+## Tech Stack
 
-* FastAPI (backend API)
-* Pandas / NumPy (data processing)
-* scikit-learn (normalization)
-* TensorFlow / Keras (LSTM)
-* Uvicorn (server)
+**Backend**
+- FastAPI + Uvicorn
+- Pandas / NumPy
+- scikit-learn (scaling)
+- TensorFlow / Keras (LSTM)
+- OpenAI API (GPT-4o-mini)
 
----
-
-## 🚀 Development Roadmap
-
-### Phase 1 (MVP)
-
-* [x] API skeleton
-* [ ] Data ingestion
-* [ ] Weekly preprocessing
-* [ ] GSSI computation
-* [ ] Alert system
-
-### Phase 2
-
-* [ ] LSTM forecasting (univariate)
-* [ ] Forecast endpoint
-* [ ] Driver contribution analysis
-
-### Phase 3
-
-* [ ] Multivariate LSTM
-* [ ] AI-generated summaries
-* [ ] Scenario simulation
+**Frontend**
+- React 19
+- Recharts (charts)
+- Lucide React (icons)
+- Vite (build tool)
 
 ---
 
-## 👥 Team Notes
+## AI Features
 
-* Backend focuses on **data pipeline + modeling**
-* Frontend can already integrate with mock endpoints
-* Keep modules independent to avoid merge conflicts
+- **AI Summary** — macro-financial narrative covering GSSI level, inflation linkage, and forecast implications
+- **Investor Strategy** — portfolio and asset allocation recommendations
+- **Risk Management** — actions for corporations and financial institutions
+- **Policy Response** — regulatory and government response suggestions
 
----
-
-## 💡 Hackathon Angle
-
-This project turns complex macro + logistics signals into:
-
-* 📊 A single interpretable index (GSSI)
-* 🔮 Predictive insights (LSTM forecast)
-* 🚨 Actionable alerts
-* 🧠 AI-generated explanations
-
----
-
-## 📌 Future Improvements
-
-* PCA-based weighting
-* Real-time streaming data
-* Anomaly detection
-* Multi-step forecasting
-* Interactive dashboards
-
----
-
-## ✨ Summary
-
-GSSI provides:
-
-* visibility into supply chain stress
-* early warnings for financial disruptions
-* explainable, data-driven insights
-
----
+All AI outputs are generated via `gpt-4o-mini` and gracefully degrade if the OpenAI call fails.
