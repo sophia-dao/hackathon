@@ -1,3 +1,4 @@
+from functools import lru_cache
 from fastapi import APIRouter, HTTPException
 from app.data_sources import build_features
 from app.index_builder import build_gssi
@@ -7,6 +8,30 @@ from app.forecasting import train_lstm_model, forecast_next_week
 
 router = APIRouter()
 
+
+@lru_cache(maxsize=1)
+def prepare_pipeline():
+    """
+    Build the full pipeline:
+    features -> gssi -> alerts -> forecast
+    """
+    features = build_features()
+    if features.empty:
+        raise HTTPException(status_code=500, detail="No feature data available")
+
+    df = build_gssi(features)
+    df = label_dataframe(df)
+
+    if len(df) < 10:
+        raise HTTPException(
+            status_code=500,
+            detail="Not enough data points to train forecast model"
+        )
+
+    model, scaler = train_lstm_model(df, lookback=8)
+    forecast = forecast_next_week(df, model, scaler, lookback=8)
+
+    return df, forecast
 
 def prepare_pipeline():
     """
@@ -129,3 +154,9 @@ def get_components():
         })
 
     return components
+
+@router.post("/refresh")
+def refresh_pipeline():
+    prepare_pipeline.cache_clear()
+    prepare_pipeline()
+    return {"status": "refreshed"}
