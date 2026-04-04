@@ -176,7 +176,7 @@ def fetch_news():
 
 
 # =============================
-# GOOGLE TRENDS (OPTIONAL)
+# GOOGLE TRENDS
 # =============================
 def fetch_trends():
     try:

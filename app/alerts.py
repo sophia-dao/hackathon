@@ -1,43 +1,76 @@
+"""
+alerts.py — Assigns alert levels to each row in the GSSI DataFrame
+and flags whether the forecast crosses a threshold change.
+
+Exposes:
+    generate_alerts(df, forecast) -> pd.DataFrame
+"""
+
 import pandas as pd
 
+ALERT_THRESHOLDS = [
+    (-float("inf"), -0.5, "Low"),
+    (-0.5, 0.5, "Moderate"),
+    (0.5, 1.5, "High"),
+    (1.5, float("inf"), "Critical"),
+]
 
-def generate_alerts(gssi_value: float) -> dict:
+ALERT_ORDER = {"Low": 0, "Moderate": 1, "High": 2, "Critical": 3}
+
+
+def _gssi_to_alert(value: float) -> str:
+    for lo, hi, label in ALERT_THRESHOLDS:
+        if lo <= value < hi:
+            return label
+    return "Critical"
+
+
+def generate_alerts(df: pd.DataFrame, forecast: dict) -> pd.DataFrame:
     """
-    Return alert level for a single GSSI value.
+    Adds an 'alert' column to df based on each row's gssi value,
+    and appends a one-row forecast entry with its predicted alert.
 
-    Thresholds:
-        < -0.5   → Low
-        -0.5–0.5 → Moderate
-        0.5–1.5  → High
-        > 1.5    → Critical
-    """
-    return {
-        "gssi_value": round(gssi_value, 4),
-        "alert_level": _alert_label(gssi_value),
-    }
-
-
-def label_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Add an 'alert' column to Sophia's DataFrame based on GSSI values.
-
-    Args:
-        df: DataFrame with a 'gssi' column
+    Parameters:
+        df:       DataFrame with at least ['date' or 'week', 'gssi'] columns
+        forecast: dict with keys 'forecast_week', 'predicted_gssi', 'predicted_alert'
 
     Returns:
-        DataFrame with an added 'alert' column (does not modify in place)
+        DataFrame with original rows + alert column + one forecast row appended.
     """
     df = df.copy()
-    df["alert"] = df["gssi"].apply(_alert_label)
-    return df
+
+    date_col = "week" if "week" in df.columns else "date"
+
+    df["alert"] = df["gssi"].apply(_gssi_to_alert)
+
+    # Append the forecast as a new row
+    forecast_row = pd.DataFrame([{
+        date_col: forecast["forecast_week"],
+        "gssi": forecast["predicted_gssi"],
+        "alert": forecast["predicted_alert"],
+    }])
+
+    result = pd.concat([df, forecast_row], ignore_index=True)
+    return result
 
 
-def _alert_label(gssi_value: float) -> str:
-    if gssi_value < -0.5:
-        return "Low"
-    elif gssi_value < 0.5:
-        return "Moderate"
-    elif gssi_value < 1.5:
-        return "High"
-    else:
-        return "Critical"
+def get_alert_summary(df: pd.DataFrame) -> dict:
+    """
+    Returns counts of each alert level in the DataFrame.
+
+    Example: {"Low": 3, "Moderate": 5, "High": 2, "Critical": 1}
+    """
+    if "alert" not in df.columns:
+        df = df.copy()
+        df["alert"] = df["gssi"].apply(_gssi_to_alert)
+
+    counts = df["alert"].value_counts().to_dict()
+    return {level: counts.get(level, 0) for level in ALERT_ORDER}
+
+
+def get_latest_alert(df: pd.DataFrame) -> str:
+    """Returns the alert level for the most recent row."""
+    date_col = "week" if "week" in df.columns else "date"
+    df = df.sort_values(date_col)
+    latest_gssi = df["gssi"].iloc[-1]
+    return _gssi_to_alert(latest_gssi)
