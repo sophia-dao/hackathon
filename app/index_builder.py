@@ -1,35 +1,28 @@
-# app/index_builder.py
-
 import pandas as pd
+
+FEATURE_COLUMNS = [
+    "freight_cost",
+    "supplier_delay",
+    "oil_price",
+    "market_volatility",
+    "inventory_stress",
+]
 
 
 def build_gssi(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Build Global Supply Chain Stress Index (GSSI)
+    Build Global Supply Chain Stress Index (GSSI) from standardized features.
+    Returns the original feature table plus a computed gssi column.
     """
-
     df = df.copy()
 
-    # Select features
-    features = [
-        "oil",
-        "freight",
-        "delivery_time",
-        "sp500_vol",
-        "dow_vol",
-        "nasdaq_vol",
-        "news_count",
-    ]
+    features = [col for col in FEATURE_COLUMNS if col in df.columns]
+    if not features:
+        raise ValueError("No valid feature columns found for GSSI computation.")
 
-    # Keep only existing columns
-    features = [f for f in features if f in df.columns]
-
-    # Normalize (z-score)
     df_norm = df[features].copy()
+    df_norm = (df_norm - df_norm.mean()) / df_norm.std(ddof=0)
 
-    df_norm = (df_norm - df_norm.mean()) / df_norm.std()
-
-    # Combine into index (equal weights)
     df["gssi"] = df_norm.mean(axis=1)
 
-    return df[["date", "gssi"]]
+    return df

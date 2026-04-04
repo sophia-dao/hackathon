@@ -1,8 +1,5 @@
 import os
 import time
-import random
-from typing import Dict, List
-
 import pandas as pd
 import requests
 import yfinance as yf
@@ -17,47 +14,43 @@ FRED_URL = "https://api.stlouisfed.org/fred/series/observations"
 GDELT_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 
 
-# =============================
-# UTIL
-# =============================
 def _to_numeric(series):
     return pd.to_numeric(series, errors="coerce")
 
 
-def merge_data(dfs: List[pd.DataFrame]):
+def merge_data(dfs: list[pd.DataFrame]) -> pd.DataFrame:
     dfs = [df for df in dfs if not df.empty]
 
     if not dfs:
         return pd.DataFrame()
 
     for df in dfs:
-        df["date"] = pd.to_datetime(df["date"])
+        df["week"] = pd.to_datetime(df["week"])
 
     merged = dfs[0]
     for df in dfs[1:]:
-        merged = merged.merge(df, on="date", how="outer")
+        merged = merged.merge(df, on="week", how="outer")
 
-    return merged.sort_values("date")
+    return merged.sort_values("week").reset_index(drop=True)
 
 
-def to_monthly(df, method="mean"):
+def to_weekly(df: pd.DataFrame, method="mean") -> pd.DataFrame:
+    df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
     df = df.set_index("date")
 
     if method == "sum":
-        df = df.resample("MS").sum()
+        df = df.resample("W-SUN").sum()
     elif method == "last":
-        df = df.resample("MS").last()
+        df = df.resample("W-SUN").last()
     else:
-        df = df.resample("MS").mean()
+        df = df.resample("W-SUN").mean()
 
-    return df.reset_index()
+    df = df.reset_index().rename(columns={"date": "week"})
+    return df
 
 
-# =============================
-# FRED DATA
-# =============================
-def fetch_fred(series_id, start="2018-01-01"):
+def fetch_fred(series_id: str, start="2018-01-01") -> pd.DataFrame:
     params = {
         "series_id": series_id,
         "api_key": FRED_API_KEY,
@@ -65,7 +58,7 @@ def fetch_fred(series_id, start="2018-01-01"):
         "observation_start": start,
     }
 
-    r = requests.get(FRED_URL, params=params)
+    r = requests.get(FRED_URL, params=params, timeout=30)
     r.raise_for_status()
 
     data = r.json()["observations"]
@@ -77,22 +70,21 @@ def fetch_fred(series_id, start="2018-01-01"):
     return df.drop(columns=["value"])
 
 
-def fetch_fred_features():
-    oil = fetch_fred("DCOILWTICO").rename(columns={"DCOILWTICO": "oil"})
-    freight = fetch_fred("FRGEXPUSM649NCIS").rename(columns={"FRGEXPUSM649NCIS": "freight"})
-    delivery = fetch_fred("DTCDFNA066MNFRBPHI").rename(columns={"DTCDFNA066MNFRBPHI": "delivery_time"})
+def fetch_fred_features() -> list[pd.DataFrame]:
+    oil = fetch_fred("DCOILWTICO").rename(columns={"DCOILWTICO": "oil_price"})
+    freight = fetch_fred("FRGEXPUSM649NCIS").rename(columns={"FRGEXPUSM649NCIS": "freight_cost"})
+    supplier_delay = fetch_fred("DTCDFNA066MNFRBPHI").rename(
+        columns={"DTCDFNA066MNFRBPHI": "supplier_delay"}
+    )
 
     return [
-        to_monthly(oil),
-        to_monthly(freight),
-        to_monthly(delivery),
+        to_weekly(oil),
+        to_weekly(freight),
+        to_weekly(supplier_delay),
     ]
 
 
-# =============================
-# MARKET DATA
-# =============================
-def fetch_market_data():
+def fetch_market_data() -> pd.DataFrame:
     tickers = ["^GSPC", "^DJI", "^IXIC"]
 
     df = yf.download(
@@ -106,8 +98,8 @@ def fetch_market_data():
     return df
 
 
-def compute_market_features(df):
-    close_df = df["Close"]  # works with group_by="column"
+def compute_market_features(df: pd.DataFrame) -> pd.DataFrame:
+    close_df = df["Close"]
 
     features = []
 
@@ -120,29 +112,25 @@ def compute_market_features(df):
         temp[f"{ticker}_return"] = temp[f"{ticker}_close"].pct_change()
         temp[f"{ticker}_vol"] = temp[f"{ticker}_return"].rolling(5).std()
 
-        temp = to_monthly(temp)
-
+        temp = to_weekly(temp, method="mean")
         features.append(temp)
 
     merged = merge_data(features)
 
-    # rename for clarity
-    return merged.rename(columns={
-        "^GSPC_close": "sp500_close",
-        "^GSPC_return": "sp500_return",
+    merged = merged.rename(columns={
         "^GSPC_vol": "sp500_vol",
-        "^DJI_close": "dow_close",
-        "^DJI_return": "dow_return",
         "^DJI_vol": "dow_vol",
-        "^IXIC_close": "nasdaq_close",
-        "^IXIC_return": "nasdaq_return",
         "^IXIC_vol": "nasdaq_vol",
     })
 
+    # collapse into one market_volatility feature
+    vol_cols = [c for c in ["sp500_vol", "dow_vol", "nasdaq_vol"] if c in merged.columns]
+    if vol_cols:
+        merged["market_volatility"] = merged[vol_cols].mean(axis=1)
 
-# =============================
-# NEWS (GDELT)
-# =============================
+    return merged[["week", "market_volatility"]]
+
+
 def fetch_news():
     params = {
         "query": "supply chain",
@@ -151,34 +139,31 @@ def fetch_news():
         "format": "json",
     }
 
-    for i in range(3):
-        r = requests.get(GDELT_URL, params=params)
+    try:
+        r = requests.get(GDELT_URL, params=params, timeout=5)
 
-        if r.status_code == 429:
-            time.sleep(2 ** i)
-            continue
+        if r.status_code != 200:
+            print("GDELT failed with status:", r.status_code)
+            return pd.DataFrame()
 
-        try:
-            data = r.json()["articles"]
-            df = pd.DataFrame(data)
+        data = r.json().get("articles", [])
+        if not data:
+            return pd.DataFrame()
 
-            df["date"] = pd.to_datetime(df["seendate"])
+        df = pd.DataFrame(data)
 
-            daily = df.groupby(df["date"].dt.date).size().reset_index(name="news_count")
-            daily.columns = ["date", "news_count"]
+        df["date"] = pd.to_datetime(df["seendate"])
+        daily = df.groupby(df["date"].dt.date).size().reset_index(name="news_count")
+        daily.columns = ["date", "news_count"]
 
-            return to_monthly(daily, method="sum")
+        return to_weekly(daily, method="sum")
 
-        except:
-            time.sleep(1)
+    except Exception as e:
+        print("GDELT ERROR:", e)
+        return pd.DataFrame()
 
-    return pd.DataFrame()
 
-
-# =============================
-# GOOGLE TRENDS (OPTIONAL)
-# =============================
-def fetch_trends():
+def fetch_trends() -> pd.DataFrame:
     try:
         pytrends = TrendReq()
         pytrends.build_payload(["trend_supply_chain", "trend_shipping_delays"])
@@ -186,21 +171,51 @@ def fetch_trends():
         df = pytrends.interest_over_time().reset_index()
         df = df.drop(columns=["isPartial"])
 
-        return to_monthly(df)
+        df = to_weekly(df, method="mean")
 
-    except:
+        # turn trends into a single inventory_stress proxy
+        trend_cols = [c for c in ["trend_supply_chain", "trend_shipping_delays"] if c in df.columns]
+        if trend_cols:
+            df["inventory_stress"] = df[trend_cols].mean(axis=1)
+
+        return df[["week", "inventory_stress"]]
+    except Exception:
         print("Trends failed")
         return pd.DataFrame()
 
 
-# =============================
-# BUILD FEATURE MATRIX
-# =============================
-def build_features():
+def build_features() -> pd.DataFrame:
     fred = fetch_fred_features()
     market = compute_market_features(fetch_market_data())
     news = fetch_news()
     trends = fetch_trends()
 
-    return merge_data(fred + [market, news, trends])
+    df = merge_data(fred + [market, news, trends])
 
+    if df.empty:
+        return df
+
+    # fallback if trends/news are missing
+    if "inventory_stress" not in df.columns:
+        if "news_count" in df.columns:
+            df["inventory_stress"] = df["news_count"]
+        else:
+            df["inventory_stress"] = 0.0
+
+    required = [
+        "week",
+        "freight_cost",
+        "supplier_delay",
+        "oil_price",
+        "market_volatility",
+        "inventory_stress",
+    ]
+
+    for col in required:
+        if col not in df.columns:
+            df[col] = pd.NA
+
+    df = df[required].sort_values("week").reset_index(drop=True)
+    df = df.ffill().bfill()
+
+    return df
