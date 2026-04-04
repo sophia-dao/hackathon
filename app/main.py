@@ -2,8 +2,8 @@ from fastapi import FastAPI
 from app.routes.gssi import router as gssi_router
 
 app = FastAPI(
-    title="Global Supply Chain Stress Index API",
-    description="Backend API for building, forecasting, and monitoring GSSI",
+    title="StressWatch API",
+    description="Backend API for StressWatch — Global Supply Chain Stress Index early-warning system",
     version="1.0.0"
 )
 

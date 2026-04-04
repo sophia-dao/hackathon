@@ -1,11 +1,22 @@
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from 'recharts'
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
 
 const FEATURE_LABELS = {
-  freight_cost:      'Freight Cost',
-  supplier_delay:    'Supplier Delay',
-  oil_price:         'Oil Price',
-  market_volatility: 'Market Volatility',
-  inventory_stress:  'Inventory Stress',
+  oil:                    'Oil Price',
+  freight:                'Freight Cost',
+  transport_ppi:          'Transport Cost Index',
+  consumer_confidence:    'Consumer Confidence',
+  sp500_close:            'S&P 500',
+  sp500_return:           'S&P 500 Return',
+  sp500_vol:              'S&P 500 Volatility',
+  dow_close:              'Dow Jones',
+  dow_return:             'Dow Return',
+  dow_vol:                'Dow Volatility',
+  nasdaq_close:           'NASDAQ',
+  nasdaq_return:          'NASDAQ Return',
+  nasdaq_vol:             'NASDAQ Volatility',
+  news_count:             'News Volume',
+  trend_supply_chain:     'Supply Chain Trend',
+  trend_shipping_delays:  'Shipping Delays Trend',
 }
 
 const COLORS = ['#f97316', '#a78bfa', '#38bdf8', '#34d399', '#fb7185']
@@ -55,9 +66,14 @@ export default function DriversView({ drivers }) {
               labelStyle={{ color: '#9ca3af', marginBottom: 4 }}
               formatter={(v, _, p) => [v.toFixed(4), `${p.payload.impact} impact`]}
             />
-            <Bar dataKey="abs" radius={[6, 6, 0, 0]} maxBarSize={60}>
-              {data.map((d, i) => <Cell key={i} fill={d.color} />)}
-            </Bar>
+            <Bar
+              dataKey="abs"
+              maxBarSize={60}
+              shape={({ x, y, width, height, index }) => (
+                <rect x={x} y={y} width={width} height={Math.max(height, 0)}
+                  fill={COLORS[index % COLORS.length]} rx={6} />
+              )}
+            />
           </BarChart>
         </ResponsiveContainer>
       </div>

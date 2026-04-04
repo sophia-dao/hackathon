@@ -1,6 +1,30 @@
 import pandas as pd
 import numpy as np
 
+# Signed weights: positive = raises stress when feature goes up
+#                 negative = lowers stress when feature goes up
+SIGNED_WEIGHTS = {
+    # Stress indicators — rising = more supply chain pressure
+    "oil":                    +0.12,
+    "freight":                +0.12,
+    "transport_ppi":          +0.10,
+    "dow_vol":                +0.08,
+    "sp500_vol":              +0.08,
+    "nasdaq_vol":             +0.08,
+    "news_count":             +0.05,
+    "trend_supply_chain":     +0.03,
+    "trend_shipping_delays":  +0.03,
+
+    # Health indicators — rising = economy healthy = less stress
+    "consumer_confidence":    -0.10,
+    "sp500_close":            -0.06,
+    "dow_close":              -0.06,
+    "nasdaq_close":           -0.06,
+    "sp500_return":           -0.03,
+    "dow_return":             -0.03,
+    "nasdaq_return":          -0.03,
+}
+
 
 def compute_gssi(
     df: pd.DataFrame,
@@ -25,14 +49,14 @@ def compute_gssi(
     if not feature_cols:
         raise ValueError("No features available to compute GSSI.")
 
-    # Default: equal weights
+    # Default: use signed weights; unknown features get a small positive weight
     if weights is None:
-        weights = {col: 1 / len(feature_cols) for col in feature_cols}
-
-    # Ensure weights match features
-    for col in feature_cols:
-        if col not in weights:
-            raise ValueError(f"Missing weight for feature: {col}")
+        unknown = [c for c in feature_cols if c not in SIGNED_WEIGHTS]
+        fallback = 0.02 / max(len(unknown), 1)
+        weights = {
+            col: SIGNED_WEIGHTS.get(col, fallback)
+            for col in feature_cols
+        }
 
     # Compute weighted sum
     gssi_values = np.zeros(len(df))

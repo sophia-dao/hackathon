@@ -1,11 +1,47 @@
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from 'recharts'
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
 
 const FEATURE_LABELS = {
-  freight_cost:       'Freight Cost',
-  supplier_delay:     'Supplier Delay',
-  oil_price:          'Oil Price',
-  market_volatility:  'Market Volatility',
-  inventory_stress:   'Inventory Stress',
+  oil:                    'Oil Price',
+  freight:                'Freight Cost',
+  transport_ppi:          'Transport Cost Index',
+  consumer_confidence:    'Consumer Confidence',
+  sp500_close:            'S&P 500',
+  sp500_return:           'S&P 500 Return',
+  sp500_vol:              'S&P 500 Volatility',
+  dow_close:              'Dow Jones',
+  dow_return:             'Dow Return',
+  dow_vol:                'Dow Volatility',
+  nasdaq_close:           'NASDAQ',
+  nasdaq_return:          'NASDAQ Return',
+  nasdaq_vol:             'NASDAQ Volatility',
+  news_count:             'News Volume',
+  trend_supply_chain:     'Supply Chain Trend',
+  trend_shipping_delays:  'Shipping Delays Trend',
+}
+
+const FEATURE_UNITS = {
+  oil:                    { prefix: '$',  suffix: '/bbl', decimals: 2 },
+  freight:                { prefix: '$',  suffix: '',     decimals: 0 },
+  transport_ppi:          { prefix: '',   suffix: ' pts', decimals: 1 },
+  consumer_confidence:    { prefix: '',   suffix: '',     decimals: 1 },
+  sp500_close:            { prefix: '$',  suffix: '',     decimals: 2 },
+  sp500_return:           { prefix: '',   suffix: '%',    decimals: 3 },
+  sp500_vol:              { prefix: '',   suffix: '%',    decimals: 3 },
+  dow_close:              { prefix: '$',  suffix: '',     decimals: 2 },
+  dow_return:             { prefix: '',   suffix: '%',    decimals: 3 },
+  dow_vol:                { prefix: '',   suffix: '%',    decimals: 3 },
+  nasdaq_close:           { prefix: '$',  suffix: '',     decimals: 2 },
+  nasdaq_return:          { prefix: '',   suffix: '%',    decimals: 3 },
+  nasdaq_vol:             { prefix: '',   suffix: '%',    decimals: 3 },
+  news_count:             { prefix: '',   suffix: ' articles', decimals: 0 },
+  trend_supply_chain:     { prefix: '',   suffix: '/100', decimals: 1 },
+  trend_shipping_delays:  { prefix: '',   suffix: '/100', decimals: 1 },
+}
+
+function formatValue(feature, value) {
+  if (value == null) return '—'
+  const u = FEATURE_UNITS[feature] ?? { prefix: '', suffix: '', decimals: 2 }
+  return `${u.prefix}${value.toFixed(u.decimals)}${u.suffix}`
 }
 
 const BAR_COLORS = ['#f97316', '#a78bfa', '#38bdf8', '#34d399', '#fb7185']
@@ -19,6 +55,9 @@ const CustomTooltip = ({ active, payload }) => {
       borderRadius: 10, padding: '10px 14px', fontSize: 13,
     }}>
       <div style={{ color: '#fff', fontWeight: 600 }}>{d.label}</div>
+      <div style={{ color: '#6b6b8a', marginTop: 4 }}>
+        Latest value: <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{formatValue(d.feature, d.latest_value)}</span>
+      </div>
       <div style={{ color: '#6b6b8a', marginTop: 2 }}>
         Correlation: <span style={{ color: payload[0].color }}>{d.correlation}</span>
       </div>
@@ -47,15 +86,20 @@ export default function DriversChart({ drivers }) {
         <div style={{ fontSize: 18, fontWeight: 700, color: '#fff' }}>Contributing Indicators</div>
       </div>
 
-      <ResponsiveContainer width="100%" height={200}>
+      <ResponsiveContainer width="100%" height={Math.max(200, data.length * 30)}>
         <BarChart data={data} layout="vertical" margin={{ top: 0, right: 10, left: 10, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#1e1e2e" horizontal={false} />
           <XAxis type="number" domain={[0, 1]} tick={{ fill: '#4a4a6a', fontSize: 11 }} tickLine={false} axisLine={false} />
-          <YAxis type="category" dataKey="label" tick={{ fill: '#9ca3af', fontSize: 12 }} tickLine={false} axisLine={false} width={120} />
+          <YAxis type="category" dataKey="label" tick={{ fill: '#9ca3af', fontSize: 11 }} tickLine={false} axisLine={false} width={160} />
           <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
-          <Bar dataKey="abs" radius={[0, 6, 6, 0]} maxBarSize={20}>
-            {data.map((d, i) => <Cell key={i} fill={d.color} />)}
-          </Bar>
+          <Bar
+            dataKey="abs"
+            maxBarSize={20}
+            shape={({ x, y, width, height, index }) => (
+              <rect x={x} y={y} width={width} height={Math.max(height, 0)}
+                fill={BAR_COLORS[index % BAR_COLORS.length]} rx={6} />
+            )}
+          />
         </BarChart>
       </ResponsiveContainer>
 

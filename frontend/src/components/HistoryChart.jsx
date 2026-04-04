@@ -56,7 +56,7 @@ export default function HistoryChart({ data }) {
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="#1e1e2e" />
           <XAxis dataKey="week" tick={{ fill: '#4a4a6a', fontSize: 11 }} tickLine={false} axisLine={false}
-            interval="preserveStartEnd" />
+            interval={Math.ceil((formatted.length || 1) / 8)} />
           <YAxis tick={{ fill: '#4a4a6a', fontSize: 11 }} tickLine={false} axisLine={false} />
           <Tooltip content={<CustomTooltip />} />
           <ReferenceLine y={0} stroke="#2a2a3e" strokeDasharray="4 4" />

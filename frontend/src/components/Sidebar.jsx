@@ -27,9 +27,9 @@ export default function Sidebar({ activeTab, onTabChange }) {
         background: 'linear-gradient(135deg, #7c3aed, #f97316)',
         borderRadius: 10,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 16, fontWeight: 700, color: '#fff',
-        marginBottom: 24,
-      }}>G</div>
+        fontSize: 13, fontWeight: 800, color: '#fff',
+        marginBottom: 24, letterSpacing: '-0.5px',
+      }}>SW</div>
 
       {items.map(({ icon: Icon, tab, label }) => {
         const active = activeTab === tab

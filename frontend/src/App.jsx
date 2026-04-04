@@ -15,14 +15,6 @@ import SystemView from './components/SystemView'
 import { fetchCurrent, fetchHistory, fetchForecast, fetchDrivers, fetchSummary } from './api'
 import { fmt, TREND_META } from './utils'
 
-const TAB_TITLES = {
-  dashboard: 'Live Monitoring',
-  overview:  'Overview',
-  forecast:  'Forecast',
-  alerts:    'Alerts',
-  drivers:   'Drivers',
-  system:    'System',
-}
 
 function Spinner() {
   return (
@@ -82,28 +74,11 @@ export default function App() {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto', minWidth: 0 }}>
         {/* Header */}
         <header style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
           padding: '14px 28px', borderBottom: '1px solid #1e1e2e',
           background: '#0a0a0f', position: 'sticky', top: 0, zIndex: 10,
           flexShrink: 0,
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#6b6b8a' }}>
-            <span
-              onClick={() => setActiveTab('system')}
-              style={{ cursor: 'pointer', transition: 'color 0.15s' }}
-              onMouseEnter={e => e.target.style.color = '#e2e8f0'}
-              onMouseLeave={e => e.target.style.color = '#6b6b8a'}
-            >System</span>
-            <span style={{ color: '#2a2a3e' }}>›</span>
-            <span
-              onClick={() => setActiveTab('overview')}
-              style={{ cursor: 'pointer', transition: 'color 0.15s' }}
-              onMouseEnter={e => e.target.style.color = '#e2e8f0'}
-              onMouseLeave={e => e.target.style.color = '#6b6b8a'}
-            >Overview</span>
-            <span style={{ color: '#2a2a3e' }}>›</span>
-            <span style={{ color: '#e2e8f0', fontWeight: 500 }}>{TAB_TITLES[activeTab]}</span>
-          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {data?.current && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#6b6b8a' }}>
@@ -145,21 +120,18 @@ export default function App() {
             <>
               <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
                 <MetricCard
-                  icon="📊"
                   label="GSSI Score"
                   value={fmt(data.current?.gssi)}
                   accentColor="#f97316"
-                  sub={<><span style={{ fontSize: 14 }}>↗</span>&nbsp;Current index value</>}
+                  sub={<>Current index value</>}
                 />
                 <MetricCard
-                  icon="🔮"
                   label="Forecast GSSI"
                   value={fmt(data.forecast?.predicted_gssi)}
                   accentColor="#a78bfa"
                   sub={<>Week of {data.forecast?.forecast_week?.slice(0, 10)}</>}
                 />
                 <MetricCard
-                  icon="🚨"
                   label="Alert Level"
                   value={data.current?.alert ?? '—'}
                   accentColor={
@@ -167,17 +139,12 @@ export default function App() {
                     data.current?.alert === 'High'     ? '#f97316' :
                     data.current?.alert === 'Moderate' ? '#f59e0b' : '#22c55e'
                   }
-                >
-                  <div style={{ marginTop: 4 }}>
-                    <AlertBadge level={data.current?.alert ?? 'Moderate'} />
-                  </div>
-                </MetricCard>
+                />
                 <MetricCard
-                  icon="📈"
                   label="Outlook"
                   value={trend.label}
                   accentColor={trend.color}
-                  sub={<><span style={{ color: trend.color }}>{trend.icon}</span>&nbsp;Supply chain trend</>}
+                  sub={<>Supply chain trend</>}
                 />
               </div>
 

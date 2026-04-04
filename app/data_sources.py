@@ -78,14 +78,16 @@ def fetch_fred(series_id, start="2018-01-01"):
 
 
 def fetch_fred_features():
-    oil = fetch_fred("DCOILWTICO").rename(columns={"DCOILWTICO": "oil"})
-    freight = fetch_fred("FRGEXPUSM649NCIS").rename(columns={"FRGEXPUSM649NCIS": "freight"})
-    delivery = fetch_fred("DTCDFNA066MNFRBPHI").rename(columns={"DTCDFNA066MNFRBPHI": "delivery_time"})
+    oil        = fetch_fred("DCOILWTICO").rename(columns={"DCOILWTICO": "oil"})
+    freight    = fetch_fred("FRGEXPUSM649NCIS").rename(columns={"FRGEXPUSM649NCIS": "freight"})
+    transport  = fetch_fred("WPU0561").rename(columns={"WPU0561": "transport_ppi"})    # shipping cost proxy
+    confidence = fetch_fred("CSCICP03USM665S").rename(columns={"CSCICP03USM665S": "consumer_confidence"})  # health indicator
 
     return [
         to_monthly(oil),
         to_monthly(freight),
-        to_monthly(delivery),
+        to_monthly(transport),
+        to_monthly(confidence),
     ]
 
 

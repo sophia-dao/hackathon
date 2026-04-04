@@ -25,7 +25,7 @@ export async function fetchDrivers() {
 }
 
 export async function fetchSummary() {
-  const r = await fetch(`${BASE}/gssi/summary`)
+  const r = await fetch(`${BASE}/gssi/ai-summary`)
   if (!r.ok) throw new Error('Failed to fetch summary')
   return r.json()
 }
