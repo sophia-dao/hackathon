@@ -1,5 +1,7 @@
 import os
-from typing import Dict, List, Optional
+import time
+import random
+from typing import Dict, List
 
 import pandas as pd
 import requests
@@ -10,362 +12,195 @@ from pytrends.request import TrendReq
 load_dotenv()
 
 FRED_API_KEY = os.getenv("FRED_API_KEY")
-EIA_API_KEY = os.getenv("EIA_API_KEY")
 
-FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
-EIA_BASE_URL = "https://api.eia.gov/v2"
-GDELT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
+FRED_URL = "https://api.stlouisfed.org/fred/series/observations"
+GDELT_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 
 
-class DataSourceError(Exception):
-    """Raised when an upstream data source fails."""
-    pass
-
-
-def _safe_numeric(series: pd.Series) -> pd.Series:
-    """Convert values to numeric, coercing bad strings like '.' to NaN."""
+# =============================
+# UTIL
+# =============================
+def _to_numeric(series):
     return pd.to_numeric(series, errors="coerce")
 
 
-def fetch_fred_series(
-    series_id: str,
-    observation_start: Optional[str] = None,
-    observation_end: Optional[str] = None,
-    frequency: Optional[str] = None,
-    aggregation_method: str = "avg",
-) -> pd.DataFrame:
-    """
-    Fetch one FRED time series as a DataFrame with columns:
-    ['date', '<series_id>']
-    """
-    if not FRED_API_KEY:
-        raise DataSourceError("Missing FRED_API_KEY in environment.")
+def merge_data(dfs: List[pd.DataFrame]):
+    dfs = [df for df in dfs if not df.empty]
 
+    if not dfs:
+        return pd.DataFrame()
+
+    for df in dfs:
+        df["date"] = pd.to_datetime(df["date"])
+
+    merged = dfs[0]
+    for df in dfs[1:]:
+        merged = merged.merge(df, on="date", how="outer")
+
+    return merged.sort_values("date")
+
+
+def to_monthly(df, method="mean"):
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.set_index("date")
+
+    if method == "sum":
+        df = df.resample("MS").sum()
+    elif method == "last":
+        df = df.resample("MS").last()
+    else:
+        df = df.resample("MS").mean()
+
+    return df.reset_index()
+
+
+# =============================
+# FRED DATA
+# =============================
+def fetch_fred(series_id, start="2018-01-01"):
     params = {
         "series_id": series_id,
         "api_key": FRED_API_KEY,
         "file_type": "json",
+        "observation_start": start,
     }
 
-    if observation_start:
-        params["observation_start"] = observation_start
-    if observation_end:
-        params["observation_end"] = observation_end
-    if frequency:
-        params["frequency"] = frequency
-        params["aggregation_method"] = aggregation_method
+    r = requests.get(FRED_URL, params=params)
+    r.raise_for_status()
 
-    response = requests.get(FRED_BASE_URL, params=params, timeout=30)
-    response.raise_for_status()
-    payload = response.json()
+    data = r.json()["observations"]
 
-    observations = payload.get("observations", [])
-    if not observations:
-        raise DataSourceError(f"No FRED observations returned for {series_id}")
-
-    df = pd.DataFrame(observations)[["date", "value"]].copy()
+    df = pd.DataFrame(data)[["date", "value"]]
     df["date"] = pd.to_datetime(df["date"])
-    df[series_id] = _safe_numeric(df["value"])
-    df = df.drop(columns=["value"]).sort_values("date").reset_index(drop=True)
+    df[series_id] = _to_numeric(df["value"])
 
-    return df
-
-
-def fetch_supply_chain_fred_data(
-    start_date: str = "2018-01-01",
-    end_date: Optional[str] = None,
-) -> Dict[str, pd.DataFrame]:
-    """
-    Suggested FRED series:
-    - DCOILWTICO: WTI crude oil
-    - FRGEXPUSM649NCIS: Cass Freight Expenditures
-    - DTCDFNA066MNFRBPHI: Current Delivery Time
-    """
-    series_map = {
-        "oil_wti": "DCOILWTICO",
-        "cass_freight_expenditures": "FRGEXPUSM649NCIS",
-        "supplier_delivery_time": "DTCDFNA066MNFRBPHI",
-    }
-
-    results = {}
-    for name, series_id in series_map.items():
-        results[name] = fetch_fred_series(
-            series_id=series_id,
-            observation_start=start_date,
-            observation_end=end_date,
-        )
-
-    return results
+    return df.drop(columns=["value"])
 
 
-def fetch_yfinance_indices(
-    tickers: Optional[List[str]] = None,
-    period: str = "5y",
-    interval: str = "1d",
-) -> pd.DataFrame:
-    """
-    Fetch market index data from yfinance.
-    Default tickers:
-    - ^GSPC : S&P 500
-    - ^DJI  : Dow Jones
-    - ^IXIC : Nasdaq Composite
-    """
-    if tickers is None:
-        tickers = ["^GSPC", "^DJI", "^IXIC"]
+def fetch_fred_features():
+    oil = fetch_fred("DCOILWTICO").rename(columns={"DCOILWTICO": "oil"})
+    freight = fetch_fred("FRGEXPUSM649NCIS").rename(columns={"FRGEXPUSM649NCIS": "freight"})
+    delivery = fetch_fred("DTCDFNA066MNFRBPHI").rename(columns={"DTCDFNA066MNFRBPHI": "delivery_time"})
+
+    return [
+        to_monthly(oil),
+        to_monthly(freight),
+        to_monthly(delivery),
+    ]
+
+
+# =============================
+# MARKET DATA
+# =============================
+def fetch_market_data():
+    tickers = ["^GSPC", "^DJI", "^IXIC"]
 
     df = yf.download(
-        tickers=tickers,
-        period=period,
-        interval=interval,
-        auto_adjust=False,
+        tickers,
+        period="5y",
+        interval="1d",
+        group_by="column",
         progress=False,
-        group_by="ticker",
-        threads=True,
     )
-
-    if df.empty:
-        raise DataSourceError("No data returned from yfinance.")
 
     return df
 
 
-def compute_market_features(price_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Convert yfinance OHLC data into a compact feature table:
-    - daily close
-    - daily return
-    - 5-day rolling volatility
-    """
-    records = []
+def compute_market_features(df):
+    close_df = df["Close"]  # works with group_by="column"
 
-    # MultiIndex columns expected when downloading multiple tickers
-    tickers = sorted(set(col[0] for col in price_df.columns))
+    features = []
 
-    for ticker in tickers:
-        ticker_df = price_df[ticker].copy()
-        if "Close" not in ticker_df.columns:
-            continue
+    for ticker in close_df.columns:
+        temp = pd.DataFrame({
+            "date": close_df.index,
+            f"{ticker}_close": close_df[ticker],
+        })
 
-        tmp = ticker_df[["Close"]].copy()
-        tmp = tmp.rename(columns={"Close": "close"})
-        tmp["return"] = tmp["close"].pct_change()
-        tmp["volatility_5d"] = tmp["return"].rolling(5).std()
-        tmp["ticker"] = ticker
-        tmp["date"] = tmp.index
-        records.append(tmp.reset_index(drop=True))
+        temp[f"{ticker}_return"] = temp[f"{ticker}_close"].pct_change()
+        temp[f"{ticker}_vol"] = temp[f"{ticker}_return"].rolling(5).std()
 
-    if not records:
-        raise DataSourceError("Could not compute market features from yfinance output.")
+        temp = to_monthly(temp)
 
-    return pd.concat(records, ignore_index=True)
+        features.append(temp)
+
+    merged = merge_data(features)
+
+    # rename for clarity
+    return merged.rename(columns={
+        "^GSPC_close": "sp500_close",
+        "^GSPC_return": "sp500_return",
+        "^GSPC_vol": "sp500_vol",
+        "^DJI_close": "dow_close",
+        "^DJI_return": "dow_return",
+        "^DJI_vol": "dow_vol",
+        "^IXIC_close": "nasdaq_close",
+        "^IXIC_return": "nasdaq_return",
+        "^IXIC_vol": "nasdaq_vol",
+    })
 
 
-import time
-import random
-
-
-def fetch_gdelt_article_list(
-    query: str,
-    max_records: int = 100,
-    retries: int = 3,
-    backoff_factor: float = 1.5,
-) -> pd.DataFrame:
-    """
-    Fetch GDELT articles with retry + backoff to handle rate limits.
-    """
-
+# =============================
+# NEWS (GDELT)
+# =============================
+def fetch_news():
     params = {
-        "query": query,
+        "query": "supply chain",
         "mode": "ArtList",
-        "maxrecords": max_records,
+        "maxrecords": 30,
         "format": "json",
     }
 
-    for attempt in range(retries):
+    for i in range(3):
+        r = requests.get(GDELT_URL, params=params)
+
+        if r.status_code == 429:
+            time.sleep(2 ** i)
+            continue
+
         try:
-            response = requests.get(GDELT_DOC_URL, params=params, timeout=30)
+            data = r.json()["articles"]
+            df = pd.DataFrame(data)
 
-            # Handle rate limit manually
-            if response.status_code == 429:
-                wait_time = backoff_factor ** attempt + random.uniform(0, 1)
-                print(f"[GDELT] Rate limited. Retrying in {wait_time:.2f}s...")
-                time.sleep(wait_time)
-                continue
+            df["date"] = pd.to_datetime(df["seendate"])
 
-            response.raise_for_status()
-            payload = response.json()
+            daily = df.groupby(df["date"].dt.date).size().reset_index(name="news_count")
+            daily.columns = ["date", "news_count"]
 
-            articles = payload.get("articles", [])
-            if not articles:
-                return pd.DataFrame()
+            return to_monthly(daily, method="sum")
 
-            df = pd.DataFrame(articles)
-
-            keep_cols = [
-                c for c in [
-                    "url",
-                    "title",
-                    "seendate",
-                    "domain",
-                    "language",
-                    "sourcecountry"
-                ] if c in df.columns
-            ]
-
-            return df[keep_cols].copy()
-
-        except Exception as e:
-            if attempt == retries - 1:
-                print(f"[GDELT] Failed after retries: {e}")
-                return pd.DataFrame()
-            else:
-                wait_time = backoff_factor ** attempt
-                time.sleep(wait_time)
+        except:
+            time.sleep(1)
 
     return pd.DataFrame()
 
-def fetch_news_signal(
-    query: str = '"supply chain disruption" OR "shipping delays" OR "port congestion"',
-    max_records: int = 100,
-) -> pd.DataFrame:
-    """
-    Create a simple daily/weekly news-volume signal from GDELT article results.
-    """
-    df = fetch_gdelt_article_list(query=query, max_records=max_records)
 
-    if df.empty:
-        return pd.DataFrame(columns=["date", "article_count"])
+# =============================
+# GOOGLE TRENDS (OPTIONAL)
+# =============================
+def fetch_trends():
+    try:
+        pytrends = TrendReq()
+        pytrends.build_payload(["trend_supply_chain", "trend_shipping_delays"])
 
-    df["date"] = pd.to_datetime(df["seendate"], errors="coerce").dt.date
-    volume = (
-        df.groupby("date")
-        .size()
-        .reset_index(name="article_count")
-        .sort_values("date")
-    )
-    volume["date"] = pd.to_datetime(volume["date"])
-
-    return volume
-
-
-def fetch_google_trends(
-    keywords: List[str],
-    timeframe: str = "today 5-y",
-    geo: str = "",
-) -> pd.DataFrame:
-    """
-    Fetch Google Trends interest-over-time data.
-    Note: pytrends is unofficial and may break.
-    """
-    if not keywords:
-        raise ValueError("keywords must not be empty")
-
-    pytrends = TrendReq(hl="en-US", tz=360)
-    pytrends.build_payload(keywords, timeframe=timeframe, geo=geo)
-    df = pytrends.interest_over_time()
-
-    if df.empty:
-        return pd.DataFrame()
-
-    df = df.reset_index()
-    if "isPartial" in df.columns:
+        df = pytrends.interest_over_time().reset_index()
         df = df.drop(columns=["isPartial"])
 
-    return df
+        return to_monthly(df)
 
-
-def fetch_eia_series(
-    route: str,
-    facets: Optional[Dict[str, List[str]]] = None,
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    frequency: str = "daily",
-    data_fields: Optional[List[str]] = None,
-    sort_column: str = "period",
-    sort_direction: str = "asc",
-    offset: int = 0,
-    length: int = 5000,
-) -> pd.DataFrame:
-    """
-    Generic EIA v2 fetcher.
-
-    Example route:
-    /petroleum/pri/spt/data
-    """
-    if not EIA_API_KEY:
-        raise DataSourceError("Missing EIA_API_KEY in environment.")
-
-    if data_fields is None:
-        data_fields = ["value"]
-
-    url = f"{EIA_BASE_URL}{route}"
-
-    params = {
-        "api_key": EIA_API_KEY,
-        "frequency": frequency,
-        "data[0]": data_fields[0],
-        "sort[0][column]": sort_column,
-        "sort[0][direction]": sort_direction,
-        "offset": offset,
-        "length": length,
-    }
-
-    # support multiple requested fields
-    for i, field in enumerate(data_fields):
-        params[f"data[{i}]"] = field
-
-    if start:
-        params["start"] = start
-    if end:
-        params["end"] = end
-
-    if facets:
-        facet_index = 0
-        for facet_name, facet_values in facets.items():
-            for value in facet_values:
-                params[f"facets[{facet_name}][{facet_index}]"] = value
-                facet_index += 1
-
-    response = requests.get(url, params=params, timeout=30)
-    response.raise_for_status()
-    payload = response.json()
-
-    records = payload.get("response", {}).get("data", [])
-    if not records:
+    except:
+        print("Trends failed")
         return pd.DataFrame()
 
-    return pd.DataFrame(records)
 
+# =============================
+# BUILD FEATURE MATRIX
+# =============================
+def build_features():
+    fred = fetch_fred_features()
+    market = compute_market_features(fetch_market_data())
+    news = fetch_news()
+    trends = fetch_trends()
 
-def fetch_energy_data_example() -> pd.DataFrame:
-    """
-    Example EIA pull for spot petroleum price data.
-    You may need to adjust route/facets after testing in EIA's API browser.
-    """
-    return fetch_eia_series(
-        route="/petroleum/pri/spt/data",
-        facets={
-            "product": ["EPCWTI"],   # WTI spot-style identifier in some EIA datasets
-        },
-        frequency="daily",
-        data_fields=["value"],
-        start="2020-01-01",
-    )
+    return merge_data(fred + [market, news, trends])
 
-
-def merge_on_date(dataframes: List[pd.DataFrame]) -> pd.DataFrame:
-    """
-    Outer-join a list of DataFrames on 'date'.
-    """
-    valid = [df.copy() for df in dataframes if df is not None and not df.empty]
-    if not valid:
-        return pd.DataFrame()
-
-    for df in valid:
-        df["date"] = pd.to_datetime(df["date"])
-
-    merged = valid[0]
-    for df in valid[1:]:
-        merged = merged.merge(df, on="date", how="outer")
-
-    return merged.sort_values("date").reset_index(drop=True)
