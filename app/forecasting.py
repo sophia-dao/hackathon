@@ -2,15 +2,17 @@ import numpy as np
 import pandas as pd
 from datetime import timedelta
 from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.layers import LSTM, Dense, Input
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense
+from tensorflow.keras.callbacks import EarlyStopping
 
 LOOKBACK = 8
 
 
 def _build_model(lookback: int) -> Sequential:
     model = Sequential([
-        LSTM(64, input_shape=(lookback, 1), return_sequences=False),
+        Input(shape=(lookback, 1)),
+        LSTM(64, return_sequences=False),
         Dense(1)
     ])
     model.compile(optimizer="adam", loss="mse")
@@ -19,16 +21,24 @@ def _build_model(lookback: int) -> Sequential:
 
 def train_lstm_model(df: pd.DataFrame, lookback: int = LOOKBACK):
     """
-    Train LSTM on the GSSI column of Sophia's DataFrame.
+    Train LSTM on the gssi column.
 
     Args:
-        df: DataFrame with columns [week, gssi, ...]
-        lookback: number of past weeks per sequence (default 8)
+        df: DataFrame with at least columns ['week', 'gssi']
+        lookback: number of past weeks per training sequence
 
     Returns:
-        (model, scaler) — trained Keras model and fitted MinMaxScaler
+        (model, scaler)
     """
-    values = df["gssi"].values.reshape(-1, 1)
+    if "gssi" not in df.columns:
+        raise ValueError("DataFrame must contain a 'gssi' column.")
+
+    if len(df) <= lookback:
+        raise ValueError(
+            f"DataFrame must contain more than {lookback} rows to create training sequences."
+        )
+
+    values = df["gssi"].astype(float).values.reshape(-1, 1)
 
     scaler = MinMaxScaler()
     scaled = scaler.fit_transform(values)
@@ -38,11 +48,25 @@ def train_lstm_model(df: pd.DataFrame, lookback: int = LOOKBACK):
         X.append(scaled[i - lookback:i])
         y.append(scaled[i])
 
-    X = np.array(X)  # (samples, lookback, 1)
-    y = np.array(y)  # (samples,)
+    X = np.array(X)
+    y = np.array(y)
 
     model = _build_model(lookback)
-    model.fit(X, y, epochs=50, batch_size=16, verbose=0)
+
+    early_stopping = EarlyStopping(
+        monitor="loss",
+        patience=5,
+        restore_best_weights=True
+    )
+
+    model.fit(
+        X,
+        y,
+        epochs=50,
+        batch_size=16,
+        verbose=0,
+        callbacks=[early_stopping]
+    )
 
     return model, scaler
 
@@ -54,18 +78,17 @@ def forecast_next_week(
     lookback: int = LOOKBACK,
 ) -> dict:
     """
-    Predict next week's GSSI from the last `lookback` weeks.
-
-    Args:
-        df: DataFrame with columns [week, gssi, ...]; must have >= lookback rows
-        model: trained Keras LSTM model
-        scaler: fitted MinMaxScaler from train_lstm_model
-        lookback: must match the value used during training
-
-    Returns:
-        {"forecast_week": "YYYY-MM-DD", "predicted_gssi": float, "predicted_alert": str}
+    Forecast next week's GSSI from the last `lookback` weeks.
     """
-    values = df["gssi"].values.reshape(-1, 1)
+    if "week" not in df.columns or "gssi" not in df.columns:
+        raise ValueError("DataFrame must contain 'week' and 'gssi' columns.")
+
+    if len(df) < lookback:
+        raise ValueError(
+            f"Need at least {lookback} rows to forecast the next week."
+        )
+
+    values = df["gssi"].astype(float).values.reshape(-1, 1)
     scaled = scaler.transform(values)
 
     sequence = scaled[-lookback:].reshape(1, lookback, 1)

@@ -3,15 +3,22 @@ from app.routes.gssi import router as gssi_router
 
 app = FastAPI(
     title="Global Supply Chain Stress Index API",
-    description="Backend for monitoring and forecasting global supply chain stress",
+    description="Backend API for building, forecasting, and monitoring GSSI",
     version="1.0.0"
 )
 
+# Include route files
 app.include_router(gssi_router, prefix="/gssi", tags=["GSSI"])
 
 
 @app.get("/")
 def root():
     return {
-        "message": "GSSI backend is running"
+        "message": "GSSI backend is running",
+        "docs": "/docs"
     }
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
