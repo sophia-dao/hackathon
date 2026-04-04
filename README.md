@@ -47,7 +47,7 @@ hackathon/
     │   └── routes/
     │       └── gssi.py
     │
-    ├── data/
+    ├── test/
     ├── venv/
     ├── requirements.txt
     └── README.md
